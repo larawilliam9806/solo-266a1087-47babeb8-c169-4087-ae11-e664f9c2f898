@@ -1,0 +1,17 @@
+# Byte-compiled / caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Runtime data
+instance/
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+/data/
+
+# Misc
+.DS_Store
+*.log

@@ -1,0 +1,50 @@
+services:
+  collector:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: archive-collector:local
+    container_name: archive-collector
+    environment:
+      COLLECTOR_DATABASE: /data/collector.sqlite3
+      # Prefilled in the browser form.  It must resolve inside this container,
+      # so it uses the compose service name rather than localhost.
+      DEMO_API_URL: http://demo:9000/records
+      DEMO_UPSTREAM_URL: http://demo:9000
+      UPSTREAM_TIMEOUT: "60"
+      MAX_RETRY_AFTER: "300"
+    ports:
+      - "8000:8000"
+    volumes:
+      - collector-data:/data
+    depends_on:
+      demo:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  demo:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: archive-collector:local
+    container_name: archive-demo
+    command: ["python", "-m", "demo.upstream"]
+    environment:
+      PORT: "9000"
+    ports:
+      - "9000:9000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:9000/healthz', timeout=3)"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  collector-data:

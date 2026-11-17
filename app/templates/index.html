@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>档案分页采集台</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="mark">◈</span>
+    <div>
+      <h1>档案分页采集台</h1>
+      <p class="sub">按记录 ID 去重 · 断点续采 · 可暂停</p>
+    </div>
+  </div>
+  <div class="env" id="env-badge">本地</div>
+</header>
+
+<main>
+  <section class="panel create">
+    <h2>新建采集任务</h2>
+    <form id="create-form" autocomplete="off">
+      <label for="url">接口地址</label>
+      <div class="row">
+        <input id="url" name="url" type="url" required
+               placeholder="http://demo:9000/records"
+               value="{{ demo_api_url }}">
+        <button type="submit" class="primary" id="create-btn">启动任务</button>
+      </div>
+      <p class="hint">接口返回 <code>records[]</code>（含 <code>id</code> 与 <code>body</code>）和 <code>next_cursor</code>。游标为空表示结束。</p>
+      <p class="error" id="create-error" hidden></p>
+    </form>
+    {% if demo_api_url %}
+    <div class="demo-bar">
+      <span class="demo-label">演示源</span>
+      <button type="button" class="chip" data-demo="slow">慢响应 1.5s</button>
+      <button type="button" class="chip" data-demo="duplicates">重复记录</button>
+      <button type="button" class="chip" data-demo="ratelimit">429 限流</button>
+      <button type="button" class="chip ghost" data-demo="reset">恢复默认</button>
+      <span class="demo-state" id="demo-state"></span>
+    </div>
+    {% endif %}
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <h2>任务</h2>
+      <span class="muted" id="job-summary">—</span>
+    </div>
+    <div id="jobs" class="jobs"></div>
+    <p class="empty" id="empty">还没有任务。粘贴接口地址后点击“启动任务”。</p>
+  </section>
+</main>
+
+<template id="job-template">
+  <article class="job">
+    <div class="job-head">
+      <div class="job-title">
+        <span class="state-dot"></span>
+        <span class="state-text"></span>
+        <code class="job-url"></code>
+      </div>
+      <div class="job-actions">
+        <button type="button" class="btn pause">暂停</button>
+        <button type="button" class="btn resume">继续</button>
+        <a class="btn download" href="#">下载 JSONL</a>
+        <button type="button" class="btn danger delete">删除</button>
+      </div>
+    </div>
+    <div class="progress"><div class="bar"></div><div class="shimmer"></div></div>
+    <div class="stats">
+      <div><span class="k">已采记录</span><span class="v rec-count">0</span></div>
+      <div><span class="k">已完成页</span><span class="v pages">0</span></div>
+      <div><span class="k">重复跳过</span><span class="v dup">0</span></div>
+      <div><span class="k">当前游标</span><span class="v cursor mono">—</span></div>
+      <div><span class="k">状态</span><span class="v state-label">—</span></div>
+    </div>
+    <div class="notice" hidden></div>
+    <details class="log-wrap">
+      <summary>事件日志</summary>
+      <ol class="log"></ol>
+    </details>
+  </article>
+</template>
+
+<script>
+  window.DEMO_API_URL = {{ demo_api_url|tojson }};
+  window.DEMO_CONTROL_URL = {{ demo_control_url|tojson }};
+</script>
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
