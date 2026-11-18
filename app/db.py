@@ -148,7 +148,7 @@ def start_job(conn: sqlite3.Connection, job_id: str) -> int | None:
         epoch = row["run_epoch"] + 1
         conn.execute(
             "UPDATE jobs SET state = 'running', run_epoch = ?, last_error = NULL, "
-            "updated_at = ? WHERE id = ?",
+            "retry_after_at = NULL, updated_at = ? WHERE id = ?",
             (epoch, time.time(), job_id),
         )
         add_event(
@@ -164,10 +164,15 @@ def start_job(conn: sqlite3.Connection, job_id: str) -> int | None:
         raise
 
 
-def pause_job(conn: sqlite3.Connection, job_id: str) -> str | None:
+def pause_job(
+    conn: sqlite3.Connection, job_id: str, *, expected_epoch: int | None = None
+) -> str | None:
     """Atomically confirm a pause.  Returns the resulting state (None if absent).
 
-    The epoch bump fences off any request that is still in flight.
+    The epoch bump fences off any request that is still in flight.  When
+    ``expected_epoch`` is given, the pause only happens if that run still owns
+    the job — this is how a worker confirms the pause Event the API set, without
+    ever being able to pause a *newer* run that already resumed.
     """
     conn.execute("BEGIN IMMEDIATE")
     try:
@@ -175,6 +180,9 @@ def pause_job(conn: sqlite3.Connection, job_id: str) -> str | None:
         if row is None:
             conn.execute("ROLLBACK")
             return None
+        if expected_epoch is not None and row["run_epoch"] != expected_epoch:
+            conn.execute("COMMIT")
+            return row["state"]
         if row["state"] in ("running", "pending"):
             conn.execute(
                 "UPDATE jobs SET state = 'paused', run_epoch = run_epoch + 1, "
@@ -211,11 +219,58 @@ def recover_running_jobs(conn: sqlite3.Connection) -> int:
         raise
 
 
-def set_retry_at(conn: sqlite3.Connection, job_id: str, at: float | None) -> None:
-    conn.execute(
-        "UPDATE jobs SET retry_after_at = ?, updated_at = ? WHERE id = ?",
-        (at, time.time(), job_id),
+def is_run_current(conn: sqlite3.Connection, job_id: str, epoch: int) -> bool:
+    """True only while this exact worker run still owns the job."""
+    row = conn.execute(
+        "SELECT 1 FROM jobs WHERE id = ? AND state = 'running' AND run_epoch = ?",
+        (job_id, epoch),
+    ).fetchone()
+    return row is not None
+
+
+def add_run_event(
+    conn: sqlite3.Connection,
+    job_id: str,
+    epoch: int,
+    level: str,
+    message: str,
+) -> bool:
+    """Log an event only if ``epoch`` is still the current run.
+
+    A paused/restarted run must not leave log lines behind that claim it did
+    work: they would interleave with the next run's log and confuse the
+    operator.  The conditional INSERT is one statement, so the epoch check and
+    the write cannot be reordered by another thread.
+    """
+    try:
+        cur = conn.execute(
+            "INSERT INTO events (job_id, at, level, message) "
+            "SELECT ?, ?, ?, ? WHERE EXISTS ("
+            "SELECT 1 FROM jobs WHERE id = ? AND run_epoch = ? "
+            "AND state IN ('running', 'done'))",
+            (job_id, time.time(), level, message, job_id, epoch),
+        )
+        return bool(cur.rowcount)
+    except sqlite3.IntegrityError:
+        # The job was deleted concurrently; logging is best-effort.
+        return False
+
+
+def set_retry_at(
+    conn: sqlite3.Connection, job_id: str, epoch: int, at: float | None
+) -> bool:
+    """Update the visible 429 wait deadline, fenced by the run epoch.
+
+    Returns False when the caller's run is stale.  In particular a worker that
+    was paused mid-wait must not clear or overwrite the ``retry_after_at`` of
+    the run that replaced it.
+    """
+    cur = conn.execute(
+        "UPDATE jobs SET retry_after_at = ?, updated_at = ? "
+        "WHERE id = ? AND state = 'running' AND run_epoch = ?",
+        (at, time.time(), job_id, epoch),
     )
+    return bool(cur.rowcount)
 
 
 def mark_error(

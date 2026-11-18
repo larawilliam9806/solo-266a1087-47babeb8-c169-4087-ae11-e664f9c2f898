@@ -56,6 +56,8 @@ function buildCard(job) {
     dup: el.querySelector(".dup"),
     cursor: el.querySelector(".cursor"),
     stateLabel: el.querySelector(".state-label"),
+    epoch: el.querySelector(".epoch"),
+    rounds: el.querySelector(".rounds-line"),
     notice: el.querySelector(".notice"),
     log: el.querySelector(".log"),
   };
@@ -117,6 +119,24 @@ function renderCard(card, job, recordCount) {
   else if (job.pages_done === 0) cursorLabel = "（首页）";
   else cursorLabel = "—";
   card.nodes.cursor.textContent = cursorLabel;
+  if (job.run_epoch !== undefined) {
+    card.nodes.epoch.textContent = `第 ${job.run_epoch} 轮`;
+  }
+
+  // Superseded rounds may finish their one in-flight request; show them so the
+  // interleaving is visible (they must not issue further requests).
+  const rounds = job.rounds || [];
+  const extra = rounds.filter((r) => !r.current);
+  if (extra.length) {
+    const parts = extra.map(
+      (r) => `旧轮次 #${r.epoch}${r.inflight ? "（在途响应收尾）" : "（退出中）"}`
+    );
+    card.nodes.rounds.hidden = false;
+    card.nodes.rounds.textContent =
+      `当前轮次 #${job.run_epoch}；${parts.join("、")}——旧轮次不再发请求、不写记录、不改状态`;
+  } else {
+    card.nodes.rounds.hidden = true;
+  }
 
   const busy = job.state === "running" || job.state === "pending";
   card.nodes.pause.hidden = !busy;
@@ -136,6 +156,12 @@ function renderCard(card, job, recordCount) {
   if (job.state === "paused") {
     notices.push({
       text: "已暂停：在途请求的结果会被丢弃，不会写入记录或推进游标。继续后将接续保存的游标。",
+      error: false,
+    });
+  }
+  if (extra.length) {
+    notices.push({
+      text: `继续已生效（当前第 ${job.run_epoch} 轮）。旧轮次只等已发请求结束，不再发请求、不写记录、不改状态；它的迟到响应与 429 等待不会影响本轮。`,
       error: false,
     });
   }
@@ -289,6 +315,50 @@ function renderDemoState(config) {
 }
 
 if (demoBar && demoControlUrl) {
+  const interleaveBtn = document.getElementById("demo-interleave");
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  async function waitForInflight(timeoutMs) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const stats = await demoCall("/stats");
+      if (stats.log.some((entry) => !entry.finished)) return true;
+      await sleep(120);
+    }
+    return false;
+  }
+
+  if (interleaveBtn) {
+    interleaveBtn.addEventListener("click", async () => {
+      interleaveBtn.disabled = true;
+      try {
+        // Deterministic interleaving: a slow request is in flight when the
+        // operator pauses and immediately resumes.
+        await demoCall("/reset", {});
+        await demoCall("/config", { slow_ms: 2000, rate_limit_every: 0 });
+        const job = await api("/api/jobs", {
+          method: "POST",
+          body: JSON.stringify({ url: demoApiUrl }),
+        });
+        if (!(await waitForInflight(5000))) {
+          throw new Error("没有观察到在途请求");
+        }
+        await api(`/api/jobs/${job.id}/pause`, { method: "POST" });
+        await api(`/api/jobs/${job.id}/resume`, { method: "POST" });
+        showToast("已暂停并立即继续：旧轮次只剩在途请求收尾，迟到响应会被丢弃");
+        clearTimeout(timer);
+        await refresh();
+        // Drop the artificial latency so the resumed round finishes quickly.
+        await sleep(2200);
+        await demoCall("/config", { slow_ms: 0 });
+      } catch (err) {
+        showToast(`交错演示失败：${err.message}`);
+      } finally {
+        interleaveBtn.disabled = false;
+      }
+    });
+  }
+
   demoBar.addEventListener("click", async (event) => {
     const chip = event.target.closest(".chip[data-demo]");
     if (!chip) return;

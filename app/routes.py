@@ -32,6 +32,7 @@ def _job_to_dict(row: sqlite3.Row) -> dict:
         "duplicates": row["duplicates"],
         "last_error": row["last_error"],
         "retry_after_at": row["retry_after_at"],
+        "run_epoch": row["run_epoch"],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
@@ -105,6 +106,7 @@ def get_job(job_id: str):
         for event in db.get_events(conn, job_id)
     ]
     data["server_time"] = datetime.now(timezone.utc).timestamp()
+    data["rounds"] = current_app.extensions["collector_manager"].rounds(job_id)
     return jsonify(data)
 
 
@@ -141,13 +143,15 @@ def resume_job(job_id: str):
 @bp.delete("/api/jobs/<job_id>")
 def remove_job(job_id: str):
     conn = db.get_db()
-    row, err = _job_or_404(conn, job_id)
+    _row, err = _job_or_404(conn, job_id)
     if err:
         return err
+    # Fences every live round (current and superseded), then deletes under the
+    # same per-job lock that start/pause use, so no new round can appear
+    # between the check and the delete.
     manager = current_app.extensions["collector_manager"]
-    if row["state"] == "running":
-        manager.pause(job_id)
-    db.delete_job(conn, job_id)
+    if not manager.delete(job_id):
+        return jsonify({"error": "任务不存在"}), 404
     return jsonify({"deleted": job_id})
 
 

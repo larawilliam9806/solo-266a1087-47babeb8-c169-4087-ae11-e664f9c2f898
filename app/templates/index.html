@@ -39,7 +39,12 @@
       <button type="button" class="chip" data-demo="duplicates">重复记录</button>
       <button type="button" class="chip" data-demo="ratelimit">429 限流</button>
       <button type="button" class="chip ghost" data-demo="reset">恢复默认</button>
+      <button type="button" class="chip scenario" id="demo-interleave"
+              title="在慢响应请求在途时暂停并立即继续，观察旧轮次的迟到响应被丢弃">
+        交错启停演示
+      </button>
       <span class="demo-state" id="demo-state"></span>
+      <span class="demo-state">可在两个浏览器标签页同时操作同一任务，观察“轮次”与“旧轮次收尾”信息。</span>
     </div>
     {% endif %}
   </section>
@@ -76,7 +81,9 @@
       <div><span class="k">重复跳过</span><span class="v dup">0</span></div>
       <div><span class="k">当前游标</span><span class="v cursor mono">—</span></div>
       <div><span class="k">状态</span><span class="v state-label">—</span></div>
+      <div><span class="k">采集轮次</span><span class="v epoch mono">—</span></div>
     </div>
+    <p class="rounds-line" hidden></p>
     <div class="notice" hidden></div>
     <details class="log-wrap">
       <summary>事件日志</summary>
